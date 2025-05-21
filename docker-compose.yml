@@ -1,0 +1,18 @@
+# docker-compose.yml
+version: '3.8'
+
+services:
+  resume-reviewer:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # In a production environment, use a secret management system for GEMINI_API_KEY.
+      # For local development, you can uncomment and set your key here,
+      # or rely on it being set in your shell environment.
+      # GEMINI_API_KEY: "YOUR_GEMINI_API_KEY"
+      # For Canvas environment, the API key is automatically provided by the runtime.
+      GEMINI_API_KEY: "" # Leave empty for Canvas runtime to inject the key
+    volumes:
+      - .:/app # Mount the current directory into the container for live updates (optional for production)
+    # command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload # Uncomment for live reload during development
