@@ -4,6 +4,8 @@ from pydantic import BaseModel
 import google.generativeai as genai
 import os
 import uvicorn
+import json # Import json module
+import re   # Import regex module
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -68,7 +70,11 @@ async def review_resume(request: ResumeReviewRequest):
         {request.resume_text}
         ---
 
-        Please provide the review in a structured JSON format with the following keys:
+        Please provide the review strictly in a structured JSON format.
+        DO NOT include any introductory or concluding text, or any markdown code block delimiters (e.g., ```json).
+        The output should be ONLY the JSON object.
+
+        Use the following keys for the JSON object:
         - "review": A general summary of the resume's alignment with the job description.
         - "strengths": A list of key strengths of the resume in relation to the job description.
         - "weaknesses": A list of key weaknesses or areas for improvement.
@@ -77,40 +83,34 @@ async def review_resume(request: ResumeReviewRequest):
         - "missing_keywords": A list of important keywords from the job description that are missing from the resume.
         """
 
-        # Define the generation configuration for structured JSON output
-        generation_config = {
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "OBJECT",
-                "properties": {
-                    "review": {"type": "STRING"},
-                    "strengths": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "weaknesses": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "suggestions": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "matched_keywords": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "missing_keywords": {"type": "ARRAY", "items": {"type": "STRING"}}
-                },
-                "propertyOrdering": ["review", "strengths", "weaknesses", "suggestions", "matched_keywords", "missing_keywords"]
-            }
-        }
-
-        # Call the Gemini Flash 2.5 API
-        model = genai.GenerativeModel('gemini-2.5-flash')
-        response = model.generate_content_async(
-            prompt,
-            generation_config=generation_config
+        # Call the Gemini Flash 1.5 API
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = await model.generate_content_async(
+            prompt
         )
 
-        print(f"Response from Gemini API: {response}")
         # Parse the JSON response
         if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-            # The API returns the JSON as a string in the 'text' part
-            json_string = response.candidates[0].content.parts[0].text
+            raw_response_text = response.candidates[0].content.parts[0].text
+            print(f"Raw Gemini response: {raw_response_text}") # For debugging
+
+            # Attempt to extract JSON string, handling potential markdown code blocks
+            # This regex looks for a block starting with ```json and ending with ```
+            match = re.search(r'```json\s*(\{.*\})\s*```', raw_response_text, re.DOTALL)
+            if match:
+                json_string = match.group(1)
+            else:
+                # If no markdown block, assume the entire response is the JSON string
+                json_string = raw_response_text.strip()
+
             review_data = json.loads(json_string)
             return ResumeReviewResponse(**review_data)
         else:
             raise HTTPException(status_code=500, detail="Gemini API did not return expected content.")
 
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON from Gemini API response: {e}. Attempted to parse: '{json_string}'")
+        raise HTTPException(status_code=500, detail=f"Failed to parse Gemini API response as JSON: {str(e)}")
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to review resume: {str(e)}")
