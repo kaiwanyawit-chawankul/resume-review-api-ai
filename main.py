@@ -1,11 +1,14 @@
 # main.py
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 import google.generativeai as genai
 import os
 import uvicorn
-import json # Import json module
-import re   # Import regex module
+import json
+import re
+from typing import Optional
+import PyPDF2
+import io
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -87,6 +90,20 @@ async def generate_gemini_review(job_description: str, resume_text: str) -> dict
     print(f"Raw Gemini response: {raw_response_text}")
     return await parse_gemini_response(raw_response_text)
 
+async def extract_text_from_file(file: UploadFile) -> str:
+    """Extract text content from uploaded file (PDF or TXT)."""
+    content = await file.read()
+
+    if file.filename.lower().endswith('.pdf'):
+        pdf_file = io.BytesIO(content)
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        text = ''
+        for page in pdf_reader.pages:
+            text += page.extract_text() + '\n'
+        return text.strip()
+    else:  # Assume text file
+        return content.decode('utf-8').strip()
+
 @app.post("/review_resume", response_model=ResumeReviewResponse)
 async def review_resume(request: ResumeReviewRequest):
     """
@@ -110,6 +127,34 @@ async def review_resume(request: ResumeReviewRequest):
     except Exception as e:
         print(f"Error calling Gemini API: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to review resume: {str(e)}")
+
+@app.post("/review_resume2", response_model=ResumeReviewResponse)
+async def review_resume(
+    resume: UploadFile = File(...),
+    job_description: UploadFile = File(...),
+):
+    """
+    Reviews a resume file against a job description file using the Gemini Flash 2.5 model.
+    Accepts PDF or TXT files.
+
+    Args:
+        resume (UploadFile): The resume file (PDF or TXT)
+        job_description (UploadFile): The job description file (PDF or TXT)
+
+    Returns:
+        ResumeReviewResponse: A structured review of the resume
+    """
+    try:
+        # Extract text from both files
+        resume_text = await extract_text_from_file(resume)
+        job_desc_text = await extract_text_from_file(job_description)
+
+        # Generate review
+        review_data = await generate_gemini_review(job_desc_text, resume_text)
+        return ResumeReviewResponse(**review_data)
+    except Exception as e:
+        print(f"Error processing files: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process files: {str(e)}")
 
 # This block is for running the app directly with `python main.py`
 # For Docker, uvicorn will be called directly.
